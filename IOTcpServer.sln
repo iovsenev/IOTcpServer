@@ -1,0 +1,30 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35208.52
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IOTcpServer.Core", "IOTcpServer.Core\IOTcpServer.Core.csproj", "{88C779B6-6186-4E2C-A05A-0AE33FE6641D}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{708CD477-C236-45A9-BABC-129419B67B60}"
+	ProjectSection(SolutionItems) = preProject
+		Directory.Build.props = Directory.Build.props
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{88C779B6-6186-4E2C-A05A-0AE33FE6641D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{88C779B6-6186-4E2C-A05A-0AE33FE6641D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{88C779B6-6186-4E2C-A05A-0AE33FE6641D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{88C779B6-6186-4E2C-A05A-0AE33FE6641D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8392F096-960F-4702-A5C2-006B104981D3}
+	EndGlobalSection
+EndGlobal
