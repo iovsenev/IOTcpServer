@@ -2,20 +2,20 @@
 
 public class ServerClientsManager : IDisposable
 {
-    private readonly object _UnauthenticatedClientsLock = new object();
-    private Dictionary<Guid, DateTime> _UnauthenticatedClients = new Dictionary<Guid, DateTime>();
+    private readonly object _unauthenticatedClientsLock = new object();
+    private Dictionary<Guid, DateTime> _unauthenticatedClients = new Dictionary<Guid, DateTime>();
 
-    private readonly object _ClientsLock = new object();
-    private Dictionary<Guid, ServerClient> _Clients = new Dictionary<Guid, ServerClient>();
+    private readonly object _clientsLock = new object();
+    private Dictionary<Guid, ServerClient> _clients = new Dictionary<Guid, ServerClient>();
 
-    private readonly object _ClientsLastSeenLock = new object();
-    private Dictionary<Guid, DateTime> _ClientsLastSeen = new Dictionary<Guid, DateTime>();
+    private readonly object _clientsLastSeenLock = new object();
+    private Dictionary<Guid, DateTime> _clientsLastSeen = new Dictionary<Guid, DateTime>();
 
-    private readonly object _ClientsKickedLock = new object();
-    private Dictionary<Guid, DateTime> _ClientsKicked = new Dictionary<Guid, DateTime>();
+    private readonly object _clientsKickedLock = new object();
+    private Dictionary<Guid, DateTime> _clientsKicked = new Dictionary<Guid, DateTime>();
 
-    private readonly object _ClientsTimedoutLock = new object();
-    private Dictionary<Guid, DateTime> _ClientsTimedout = new Dictionary<Guid, DateTime>();
+    private readonly object _clientsTimedoutLock = new object();
+    private Dictionary<Guid, DateTime> _clientsTimedout = new Dictionary<Guid, DateTime>();
 
     public ServerClientsManager()
     {
@@ -39,11 +39,11 @@ public class ServerClientsManager : IDisposable
     {
         if (disposing)
         {
-            _UnauthenticatedClients = new();
-            _Clients = new();
-            _ClientsLastSeen = new();
-            _ClientsKicked = new();
-            _ClientsTimedout = new();
+            _unauthenticatedClients = new();
+            _clients = new();
+            _clientsLastSeen = new();
+            _clientsKicked = new();
+            _clientsTimedout = new();
         }
     }
 
@@ -72,276 +72,276 @@ public class ServerClientsManager : IDisposable
 
     internal void AddUnauthenticatedClient(Guid guid)
     {
-        lock (_UnauthenticatedClientsLock)
+        lock (_unauthenticatedClientsLock)
         {
-            _UnauthenticatedClients.Add(guid, DateTime.UtcNow);
+            _unauthenticatedClients.Add(guid, DateTime.UtcNow);
         }
     }
 
     internal void RemoveUnauthenticatedClient(Guid guid)
     {
-        lock (_UnauthenticatedClientsLock)
+        lock (_unauthenticatedClientsLock)
         {
-            if (_UnauthenticatedClients.ContainsKey(guid))
-                _UnauthenticatedClients.Remove(guid);
+            if (_unauthenticatedClients.ContainsKey(guid))
+                _unauthenticatedClients.Remove(guid);
         }
     }
 
     internal bool ExistsUnauthenticatedClient(Guid guid)
     {
-        lock (_UnauthenticatedClientsLock)
+        lock (_unauthenticatedClientsLock)
         {
-            return _UnauthenticatedClients.ContainsKey(guid);
+            return _unauthenticatedClients.ContainsKey(guid);
         }
     }
 
     internal void ReplaceUnauthenticatedClient(Guid original, Guid update)
     {
-        lock (_UnauthenticatedClientsLock)
+        lock (_unauthenticatedClientsLock)
         {
-            if (_UnauthenticatedClients.ContainsKey(original))
+            if (_unauthenticatedClients.ContainsKey(original))
             {
-                DateTime dt = _UnauthenticatedClients[original];
-                _UnauthenticatedClients.Remove(original);
-                _UnauthenticatedClients.Add(update, dt);
+                DateTime dt = _unauthenticatedClients[original];
+                _unauthenticatedClients.Remove(original);
+                _unauthenticatedClients.Add(update, dt);
             }
         }
     }
 
     internal Dictionary<Guid, DateTime> AllUnauthenticatedClients()
     {
-        lock (_UnauthenticatedClientsLock)
+        lock (_unauthenticatedClientsLock)
         {
-            return new Dictionary<Guid, DateTime>(_UnauthenticatedClients);
+            return new Dictionary<Guid, DateTime>(_unauthenticatedClients);
         }
     }
 
     internal void AddClient(Guid guid, ServerClient client)
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            _Clients.Add(guid, client);
+            _clients.Add(guid, client);
         }
     }
 
     internal ServerClient? GetClient(Guid guid)
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            if (_Clients.ContainsKey(guid)) return _Clients[guid];
+            if (_clients.ContainsKey(guid)) return _clients[guid];
             return null;
         }
     }
 
     internal void RemoveClient(Guid guid)
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            if (_Clients.ContainsKey(guid))
-                _Clients.Remove(guid);
+            if (_clients.ContainsKey(guid))
+                _clients.Remove(guid);
         }
     }
 
     internal bool ExistsClient(Guid guid)
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            return _Clients.ContainsKey(guid);
+            return _clients.ContainsKey(guid);
         }
     }
 
     internal void ReplaceClient(Guid original, Guid update)
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            if (_Clients.ContainsKey(original))
+            if (_clients.ContainsKey(original))
             {
-                ServerClient md = _Clients[original];
-                _Clients.Remove(original);
-                _Clients.Add(update, md);
+                ServerClient md = _clients[original];
+                _clients.Remove(original);
+                _clients.Add(update, md);
             }
         }
     }
 
     internal Dictionary<Guid, ServerClient> AllClients()
     {
-        lock (_ClientsLock)
+        lock (_clientsLock)
         {
-            return new Dictionary<Guid, ServerClient>(_Clients);
+            return new Dictionary<Guid, ServerClient>(_clients);
         }
     }
 
     internal void AddClientLastSeen(Guid guid)
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            _ClientsLastSeen.Add(guid, DateTime.UtcNow);
+            _clientsLastSeen.Add(guid, DateTime.UtcNow);
         }
     }
 
     internal void RemoveClientLastSeen(Guid guid)
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            if (_ClientsLastSeen.ContainsKey(guid))
-                _ClientsLastSeen.Remove(guid);
+            if (_clientsLastSeen.ContainsKey(guid))
+                _clientsLastSeen.Remove(guid);
         }
     }
 
     internal bool ExistsClientLastSeen(Guid guid)
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            return _ClientsLastSeen.ContainsKey(guid);
+            return _clientsLastSeen.ContainsKey(guid);
         }
     }
 
     internal void ReplaceClientLastSeen(Guid original, Guid update)
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            if (_ClientsLastSeen.ContainsKey(original))
+            if (_clientsLastSeen.ContainsKey(original))
             {
-                DateTime dt = _ClientsLastSeen[original];
-                _ClientsLastSeen.Remove(original);
-                _ClientsLastSeen.Add(update, dt);
+                DateTime dt = _clientsLastSeen[original];
+                _clientsLastSeen.Remove(original);
+                _clientsLastSeen.Add(update, dt);
             }
         }
     }
 
     internal void UpdateClientLastSeen(Guid guid, DateTime dt)
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            if (_ClientsLastSeen.ContainsKey(guid))
+            if (_clientsLastSeen.ContainsKey(guid))
             {
-                _ClientsLastSeen.Remove(guid);
-                _ClientsLastSeen.Add(guid, dt.ToUniversalTime());
+                _clientsLastSeen.Remove(guid);
+                _clientsLastSeen.Add(guid, dt.ToUniversalTime());
             }
         }
     }
 
     internal Dictionary<Guid, DateTime> AllClientsLastSeen()
     {
-        lock (_ClientsLastSeenLock)
+        lock (_clientsLastSeenLock)
         {
-            return new Dictionary<Guid, DateTime>(_ClientsLastSeen);
+            return new Dictionary<Guid, DateTime>(_clientsLastSeen);
         }
     }
 
     internal void AddClientKicked(Guid guid)
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            _ClientsKicked.Add(guid, DateTime.UtcNow);
+            _clientsKicked.Add(guid, DateTime.UtcNow);
         }
     }
 
     internal void RemoveClientKicked(Guid guid)
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            if (_ClientsKicked.ContainsKey(guid))
-                _ClientsKicked.Remove(guid);
+            if (_clientsKicked.ContainsKey(guid))
+                _clientsKicked.Remove(guid);
         }
     }
 
     internal bool ExistsClientKicked(Guid guid)
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            return _ClientsKicked.ContainsKey(guid);
+            return _clientsKicked.ContainsKey(guid);
         }
     }
 
     internal void ReplaceClientKicked(Guid original, Guid update)
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            if (_ClientsKicked.ContainsKey(original))
+            if (_clientsKicked.ContainsKey(original))
             {
-                DateTime dt = _ClientsKicked[original];
-                _ClientsKicked.Remove(original);
-                _ClientsKicked.Add(update, dt);
+                DateTime dt = _clientsKicked[original];
+                _clientsKicked.Remove(original);
+                _clientsKicked.Add(update, dt);
             }
         }
     }
 
     internal void UpdateClientKicked(Guid guid, DateTime dt)
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            if (_ClientsKicked.ContainsKey(guid))
+            if (_clientsKicked.ContainsKey(guid))
             {
-                _ClientsKicked.Remove(guid);
-                _ClientsKicked.Add(guid, dt.ToUniversalTime());
+                _clientsKicked.Remove(guid);
+                _clientsKicked.Add(guid, dt.ToUniversalTime());
             }
         }
     }
 
     internal Dictionary<Guid, DateTime> AllClientsKicked()
     {
-        lock (_ClientsKickedLock)
+        lock (_clientsKickedLock)
         {
-            return new Dictionary<Guid, DateTime>(_ClientsKicked);
+            return new Dictionary<Guid, DateTime>(_clientsKicked);
         }
     }
 
     internal void AddClientTimedout(Guid guid)
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            _ClientsTimedout.Add(guid, DateTime.UtcNow);
+            _clientsTimedout.Add(guid, DateTime.UtcNow);
         }
     }
 
     internal void RemoveClientTimedout(Guid guid)
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            if (_ClientsTimedout.ContainsKey(guid))
-                _ClientsTimedout.Remove(guid);
+            if (_clientsTimedout.ContainsKey(guid))
+                _clientsTimedout.Remove(guid);
         }
     }
 
     internal bool ExistsClientTimedout(Guid guid)
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            return _ClientsTimedout.ContainsKey(guid);
+            return _clientsTimedout.ContainsKey(guid);
         }
     }
 
     internal void ReplaceClientTimedout(Guid original, Guid update)
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            if (_ClientsTimedout.ContainsKey(original))
+            if (_clientsTimedout.ContainsKey(original))
             {
-                DateTime dt = _ClientsTimedout[original];
-                _ClientsTimedout.Remove(original);
-                _ClientsTimedout.Add(update, dt);
+                DateTime dt = _clientsTimedout[original];
+                _clientsTimedout.Remove(original);
+                _clientsTimedout.Add(update, dt);
             }
         }
     }
 
     internal void UpdateClientTimeout(Guid guid, DateTime dt)
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            if (_ClientsTimedout.ContainsKey(guid))
+            if (_clientsTimedout.ContainsKey(guid))
             {
-                _ClientsTimedout.Remove(guid);
-                _ClientsTimedout.Add(guid, dt.ToUniversalTime());
+                _clientsTimedout.Remove(guid);
+                _clientsTimedout.Add(guid, dt.ToUniversalTime());
             }
         }
     }
 
     internal Dictionary<Guid, DateTime> AllClientsTimedout()
     {
-        lock (_ClientsTimedoutLock)
+        lock (_clientsTimedoutLock)
         {
-            return new Dictionary<Guid, DateTime>(_ClientsTimedout);
+            return new Dictionary<Guid, DateTime>(_clientsTimedout);
         }
     }
 }

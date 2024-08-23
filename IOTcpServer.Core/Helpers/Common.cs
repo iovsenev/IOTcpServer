@@ -19,7 +19,7 @@ internal class Common
         Array.Copy(tail, 0, arrayCombined, head.Length, tail.Length);
         return arrayCombined;
     }
-    internal static void BytesToStream(byte[] data, int start, out int contentLength, out Stream stream)
+    internal static void BytesToStream(byte[]? data, int start, out int contentLength, out Stream stream)
     {
         contentLength = 0;
         stream = new MemoryStream(Array.Empty<byte>());

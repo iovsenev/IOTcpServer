@@ -1,11 +1,12 @@
 ﻿using IOTcpServer.Core.Constants;
+using IOTcpServer.Core.Infrastructure;
 
 namespace IOTcpServer.Core.Events;
 
 /// <summary>
 /// TCP сервер ивенты
 /// </summary>
-public class ServerEvents
+public class ServerEvents : IDisposable
 {
     /// <summary>
     /// Конструктор
@@ -14,6 +15,7 @@ public class ServerEvents
     {
 
     }
+    
     /// <summary>
     /// Событие, срабатывающее при запросе аутентификации от клиента.
     /// </summary>
@@ -67,6 +69,60 @@ public class ServerEvents
     /// Это событие вызывается при возникновении исключения.
     /// </summary>
     public event EventHandler<ExceptionEventArgs>? ExceptionEncountered;
+
+    public event Func<SyncRequest, Task<SyncResponse>>? SyncRequestReceivedAsync;
+
+    internal event EventHandler<ClientSentMessageEventArgs>? ClientSentMessageEvent;
+    internal event EventHandler<ClientReceivedMessageEventArgs>? ClientReceivedMessageEvent;
+    internal event EventHandler<ClientReplaceIdEventArgs>? ClientReplaceIdEvent;
+    internal event EventHandler<ClientRemoveUnauthenticatedEventArgs>? ClientRemoveUnauthenticatedEvent;
+    internal event EventHandler<ClientUpdateLastSeenEventArgs>? ClientUpdateLastSeenEvent;
+
+    private readonly object _syncResponseLock = new object();
+    internal event EventHandler<SyncResponseReceivedEventArgs>? SyncResponseReceived;
+
+    internal async Task<SyncResponse> HandleSyncRequestReceivedAsync(SyncRequest req)
+    {
+        if (SyncRequestReceivedAsync == null)
+            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
+        try
+        {
+            var ret = await SyncRequestReceivedAsync(req);
+            return ret;
+        }
+        catch (Exception)
+        {
+            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
+        }
+    }
+    internal void HandleClientSentMessage(object sender, ClientSentMessageEventArgs args)
+    {
+        WrappedEventHandler(() => ClientSentMessageEvent?.Invoke(sender, args), "MessageSent", sender);
+    }
+    internal void HandleReplaceClientGuid(object sender, ClientReplaceIdEventArgs args)
+    {
+        WrappedEventHandler(() => ClientReplaceIdEvent?.Invoke(sender, args), "MessageSent", sender);
+    }
+    internal void HandleClientReceivedMessage(object sender, ClientReceivedMessageEventArgs args)
+    {
+        WrappedEventHandler(() => ClientReceivedMessageEvent?.Invoke(sender, args), "MessageSent", sender);
+    }
+    internal void HandleClientRemoveUnauthenticated(object sender, ClientRemoveUnauthenticatedEventArgs args)
+    {
+        WrappedEventHandler(() => ClientRemoveUnauthenticatedEvent?.Invoke(sender, args), "MessageSent", sender);
+    }
+    internal void HandleClientUpdateLastSeen(object sender, ClientUpdateLastSeenEventArgs args)
+    {
+        WrappedEventHandler(() => ClientUpdateLastSeenEvent?.Invoke(sender, args), "MessageSent", sender);
+    }
+
+    internal void HandleSyncResponseReceived(object sender, SyncResponseReceivedEventArgs args)
+    {
+        lock (_syncResponseLock)
+        {
+            SyncResponseReceived?.Invoke(sender, args);
+        }
+    }
 
     internal bool IsUsingMessages
     {
@@ -142,5 +198,25 @@ public class ServerEvents
         {
             logger?.Invoke(Severity.Error, "Event handler exception in " + handler + ": " + Environment.NewLine + e.ToString());
         }
+    }
+
+    public void Dispose()
+    {
+        AuthenticationRequested = null;
+        AuthenticationSucceeded = null;
+        AuthenticationFailed = null;
+        ClientConnected = null;
+        ClientDisconnected = null;
+        MessageReceived = null;
+        StreamReceived = null;
+        ServerStarted = null;
+        ServerStopped = null;
+        ExceptionEncountered = null;
+        ClientSentMessageEvent = null;
+        ClientReceivedMessageEvent = null;
+        ClientReplaceIdEvent = null;
+        ClientRemoveUnauthenticatedEvent = null;
+        ClientUpdateLastSeenEvent = null;
+        SyncResponseReceived = null;
     }
 }

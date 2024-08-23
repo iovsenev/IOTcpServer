@@ -4,8 +4,7 @@ namespace IOTcpServer.Core.Events;
 
 internal class ServerCallbacks
 {
-    private Func<SyncRequest, SyncResponse>? _SyncRequestReceived = null;
-    private Func<SyncRequest, Task<SyncResponse>>? _SyncRequestReceivedAsync = null;
+    private Func<SyncRequest, Task<SyncResponse>>? _syncRequestReceivedAsync = null;
 
     /// <summary>
     /// Instantiate.
@@ -18,71 +17,33 @@ internal class ServerCallbacks
     /// <summary>
     /// Обратный вызов при получении синхронного запроса, требующего ответа.
     /// </summary>
-    [Obsolete("Please migrate to async methods.")]
-    public Func<SyncRequest, SyncResponse>? SyncRequestReceived
-    {
-        get
-        {
-            return _SyncRequestReceived;
-        }
-        set
-        {
-            _SyncRequestReceived = value;
-        }
-    }
-
-    /// <summary>
-    /// Обратный вызов при получении синхронного запроса, требующего ответа.
-    /// </summary>
     public Func<SyncRequest, Task<SyncResponse>>? SyncRequestReceivedAsync
     {
         get
         {
-            return _SyncRequestReceivedAsync;
+            return _syncRequestReceivedAsync;
         }
         set
         {
-            _SyncRequestReceivedAsync = value;
+            _syncRequestReceivedAsync = value;
         }
-    }
-
-    internal SyncResponse HandleSyncRequestReceived(SyncRequest req)
-    {
-        SyncResponse? ret = null;
-
-#pragma warning disable CS0618 // Type or member is obsolete
-        if (SyncRequestReceived != null)
-        {
-            try
-            {
-                ret = SyncRequestReceived(req);
-            }
-            catch (Exception)
-            {
-
-            }
-        }
-#pragma warning restore CS0618 // Type or member is obsolete
-
-        return ret;
     }
 
     internal async Task<SyncResponse> HandleSyncRequestReceivedAsync(SyncRequest req)
     {
-        SyncResponse ret = null;
+        SyncResponse ret;
+        if (SyncRequestReceivedAsync == null)
+            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
 
-        if (SyncRequestReceivedAsync != null)
+        try
         {
-            try
-            {
-                ret = await SyncRequestReceivedAsync(req);
-            }
-            catch (Exception)
-            {
-
-            }
+            ret = await SyncRequestReceivedAsync(req);
+            return ret;
+        }
+        catch (Exception)
+        {
+            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
         }
 
-        return ret;
     }
 }

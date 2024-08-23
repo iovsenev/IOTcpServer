@@ -15,7 +15,8 @@ public class SyncResponse
     public SyncResponse(SyncRequest req, string data)
     {
         if (req == null) throw new ArgumentNullException(nameof(req));
-        ExpirationUtc = req.ExpirationUtc;
+        if (req.ExpirationUtc == null) throw new ArgumentNullException(nameof(req.ExpirationUtc));
+        ExpirationUtc = req.ExpirationUtc.Value;
         ConversationGuid = req.ConversationGuid;
 
         if (String.IsNullOrEmpty(data)) Data = Array.Empty<byte>();
@@ -30,7 +31,8 @@ public class SyncResponse
     public SyncResponse(SyncRequest req, byte[] data)
     {
         if (req == null) throw new ArgumentNullException(nameof(req));
-        ExpirationUtc = req.ExpirationUtc;
+        if (req.ExpirationUtc == null) throw new ArgumentNullException(nameof(req.ExpirationUtc));
+        ExpirationUtc = req.ExpirationUtc.Value;
         ConversationGuid = req.ConversationGuid;
         Data = data;
     }
@@ -44,7 +46,8 @@ public class SyncResponse
     public SyncResponse(SyncRequest req, Dictionary<string, object> metadata, string data)
     {
         if (req == null) throw new ArgumentNullException(nameof(req));
-        ExpirationUtc = req.ExpirationUtc;
+        if (req.ExpirationUtc == null) throw new ArgumentNullException(nameof(req.ExpirationUtc));
+        ExpirationUtc = req.ExpirationUtc.Value;
         ConversationGuid = req.ConversationGuid;
 
         Metadata = metadata;
@@ -68,7 +71,8 @@ public class SyncResponse
     public SyncResponse(SyncRequest req, Dictionary<string, object> metadata, byte[] data)
     {
         if (req == null) throw new ArgumentNullException(nameof(req));
-        ExpirationUtc = req.ExpirationUtc;
+        if (req.ExpirationUtc == null) throw new ArgumentNullException(nameof(req.ExpirationUtc));
+        ExpirationUtc = req.ExpirationUtc.Value;
         ConversationGuid = req.ConversationGuid;
 
         Metadata = metadata;
@@ -82,7 +86,7 @@ public class SyncResponse
     /// <param name="expirationUtc"></param>
     /// <param name="metadata"></param>
     /// <param name="data"></param>
-    public SyncResponse(Guid convGuid, DateTime expirationUtc, Dictionary<string, object> metadata, byte[] data)
+    public SyncResponse(Guid convGuid, DateTime expirationUtc, Dictionary<string, object>? metadata, byte[]? data)
     {
         ConversationGuid = convGuid;
         ExpirationUtc = expirationUtc;
@@ -93,12 +97,12 @@ public class SyncResponse
     /// <summary>
     /// Метаданные для присоединения к ответу.
     /// </summary>
-    public Dictionary<string, object> Metadata { get; } = new Dictionary<string, object>();
+    public Dictionary<string, object>? Metadata { get; } = new Dictionary<string, object>();
 
     /// <summary>
     /// Данные для присоединения к ответу.
     /// </summary>
-    public byte[] Data { get; }
+    public byte[]? Data { get; }
 
     /// <summary>
     /// GUID разговора.

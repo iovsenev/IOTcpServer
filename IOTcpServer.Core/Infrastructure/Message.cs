@@ -100,7 +100,7 @@ internal class Message
     /// Поток, содержащий данные сообщения.
     /// </summary>
     [JsonIgnore]
-    public Stream DataStream { get; set; }
+    public Stream? DataStream { get; set; }
 
     /// <summary>
     /// Строковая версия объекта, понятная человеку.

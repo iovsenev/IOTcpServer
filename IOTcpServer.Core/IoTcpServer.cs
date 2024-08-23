@@ -1,4 +1,5 @@
 ﻿using IOTcpServer.Core.Constants;
+using IOTcpServer.Core.CustomExceptions;
 using IOTcpServer.Core.Events;
 using IOTcpServer.Core.Extensions;
 using IOTcpServer.Core.Helpers;
@@ -18,7 +19,6 @@ public class IoTcpServer : IDisposable
 
     private readonly ServerSettings _settings;
 
-    private ServerCallbacks _callbacks;
     private ServerEvents _events;
     private ServerStatistics _statistics;
 
@@ -38,6 +38,10 @@ public class IoTcpServer : IDisposable
 
     private Task? _acceptConnections = null;
     private Task? _monitorClients = null;
+
+    private readonly object _SyncResponseLock = new object();
+    private event EventHandler<SyncResponseReceivedEventArgs>? _SyncResponseReceived;
+
     public IoTcpServer(ServerSettings serverSettings)
     {
         _settings = serverSettings;
@@ -46,7 +50,6 @@ public class IoTcpServer : IDisposable
         _messageBuilder = new();
         _clientManager = new();
         _tokenSource = new();
-        _callbacks = new();
         _token = _tokenSource.Token;
 
         if (_settings.IsSsl)
@@ -63,7 +66,15 @@ public class IoTcpServer : IDisposable
         }
         else _mode = Mode.Tcp;
         _listener = new TcpListener(_settings.ListenIp, _settings.ListenPort);
+
+        _events.ClientSentMessageEvent += SentMessage;
+        _events.ClientReceivedMessageEvent += ReceivedMessage;
+        _events.ClientReplaceIdEvent += ReplaceId;
+        _events.ClientRemoveUnauthenticatedEvent += RemoveUnauthenticated;
+        _events.ClientUpdateLastSeenEvent += UpdateLastSeen;
     }
+
+
 
     public ServerSettings Settings => _settings;
     public ServerEvents Events { get => _events; }
@@ -99,7 +110,154 @@ public class IoTcpServer : IDisposable
         _events.HandleServerStarted(this, EventArgs.Empty);
     }
 
+    public void Stop()
+    {
+        if (!_isListening) throw new InvalidOperationException("WatsonTcpServer is not running.");
+
+        try
+        {
+            _isListening = false;
+            _listener.Stop();
+            _tokenSource.Cancel();
+
+            _settings.Logger?.Invoke(Severity.Info, Header + "stopped");
+            _events.HandleServerStopped(this, EventArgs.Empty);
+        }
+        catch (Exception e)
+        {
+            _events.HandleExceptionEncountered(this, new ExceptionEventArgs(e));
+            throw;
+        }
+    }
+
+    public async Task<bool> SendAsync(
+        Guid ClientId,
+        string data,
+        Dictionary<string, object>? metadata = null,
+        int start = 0,
+        CancellationToken token = default)
+    {
+        byte[] bytes = Array.Empty<byte>();
+        if (!String.IsNullOrEmpty(data)) bytes = Encoding.UTF8.GetBytes(data);
+        return await SendAsync(ClientId, bytes, metadata, start, token).ConfigureAwait(false);
+    }
+
+    public async Task<bool> SendAsync(
+        Guid ClientId, byte[] data,
+        Dictionary<string, object>? metadata = null,
+        int start = 0,
+        CancellationToken token = default)
+    {
+        if (data == null) data = Array.Empty<byte>();
+        Common.BytesToStream(data, start, out int contentLength, out Stream stream);
+        return await SendAsync(ClientId, contentLength, stream, metadata, token).ConfigureAwait(false);
+    }
+
+    public async Task<bool> SendAsync(
+        Guid ClientId,
+        long contentLength,
+        Stream stream,
+        Dictionary<string, object>? metadata = null,
+        CancellationToken token = default)
+    {
+        if (contentLength < 0) throw new ArgumentException("Content length must be zero or greater.");
+        if (token == default(CancellationToken)) token = _token;
+        ServerClient? client = _clientManager.GetClient(ClientId);
+        if (client == null)
+        {
+            _settings.Logger?.Invoke(Severity.Error, $"{Header} unable to find client {ClientId.ToString()}");
+            throw new KeyNotFoundException("Unable to find client " + ClientId.ToString() + ".");
+        }
+
+        if (stream == null) stream = new MemoryStream(Array.Empty<byte>());
+        Message msg = _messageBuilder.ConstructNew(contentLength, stream, false, false, null, metadata);
+
+        var contentCountSend = await client.SendInternalAsync(msg, contentLength, stream, token).ConfigureAwait(false);
+
+        if (!contentCountSend)
+            return false;
+        return true;
+    }
+
+    public async Task<SyncResponse> SendAndWaitAsync(
+        int timeoutMs,
+        Guid ClientId,
+        string data,
+        Dictionary<string, object>? metadata = null,
+        int start = 0,
+        CancellationToken token = default)
+    {
+        byte[] bytes = Array.Empty<byte>();
+        if (!String.IsNullOrEmpty(data)) bytes = Encoding.UTF8.GetBytes(data);
+        return await SendAndWaitAsync(timeoutMs, ClientId, bytes, metadata, start, token);
+        // SendAndWaitAsync(timeoutMs, guid, bytes, metadata, token).ConfigureAwait(false);
+    }
+
+    public async Task<SyncResponse> SendAndWaitAsync(
+        int timeoutMs,
+        Guid ClientId,
+        byte[] data,
+        Dictionary<string, object>? metadata = null,
+        int start = 0,
+        CancellationToken token = default)
+    {
+        if (data == null) data = Array.Empty<byte>();
+        Common.BytesToStream(data, start, out int contentLength, out Stream stream);
+        return await SendAndWaitAsync(timeoutMs, ClientId, contentLength, stream, metadata, token);
+    }
+
+    public async Task<SyncResponse> SendAndWaitAsync(
+        int timeoutMs,
+        Guid guid,
+        long contentLength,
+        Stream stream,
+        Dictionary<string, object>? metadata = null,
+        CancellationToken token = default)
+    {
+        if (contentLength < 0) throw new ArgumentException("Content length must be zero or greater.");
+        if (timeoutMs < 1000) throw new ArgumentException("Timeout milliseconds must be 1000 or greater.");
+        ServerClient? client = _clientManager.GetClient(guid);
+        if (client == null)
+        {
+            _settings.Logger?.Invoke(Severity.Error, Header + "unable to find client " + guid.ToString());
+            throw new KeyNotFoundException("Unable to find client " + guid.ToString() + ".");
+        }
+        if (stream == null) stream = new MemoryStream(Array.Empty<byte>());
+        DateTime expiration = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        Message msg = _messageBuilder.ConstructNew(contentLength, stream, true, false, expiration, metadata);
+        return await client.SendAndWaitInternalAsync(msg, timeoutMs, contentLength, stream, token);
+    }
+
+    public IEnumerable<ServerClient> ListClients()
+    {
+        Dictionary<Guid, ServerClient> clients = _clientManager.AllClients();
+        if (clients != null && clients.Count > 0)
+        {
+            foreach (KeyValuePair<Guid, ServerClient> client in clients)
+            {
+                yield return client.Value;
+            }
+        }
+    }
+
     #region Connection client
+    public bool IsClientConnected(Guid guid)
+    {
+        return _clientManager.ExistsClient(guid);
+    }
+
+    public async Task DisconnectAllClientsAsync(MessageStatus status = MessageStatus.Removed, bool sendNotice = true, CancellationToken token = default)
+    {
+        Dictionary<Guid, ServerClient> clients = _clientManager.AllClients();
+        if (clients != null && clients.Count > 0)
+        {
+            foreach (KeyValuePair<Guid, ServerClient> client in clients)
+            {
+                await DisconnectClientAsync(client.Key, status, sendNotice, token).ConfigureAwait(false);
+            }
+        }
+    }
+
     public async Task DisconnectClientAsync(Guid guid, MessageStatus status = MessageStatus.Removed, bool sendNotice = true, CancellationToken token = default)
     {
         ServerClient? client = _clientManager.GetClient(guid);
@@ -211,8 +369,6 @@ public class IoTcpServer : IDisposable
                 break;
             }
         }
-
-
     }
 
     private async Task<ServerClient?> AcceptAndValidate()
@@ -238,7 +394,8 @@ public class IoTcpServer : IDisposable
             return null;
         }
 
-        ServerClient client = new ServerClient(tcpClient, _messageBuilder, _settings.StreamBufferSize, _settings.Logger);
+        ServerClient client = new ServerClient(tcpClient, _messageBuilder, _events, _settings);
+
         client.SendBuffer = new byte[_settings.StreamBufferSize];
 
         _clientManager.AddClient(client.Id, client);
@@ -291,14 +448,14 @@ public class IoTcpServer : IDisposable
             byte[] data = Encoding.UTF8.GetBytes("Authentication required");
             Message authMsg = new Message(client.DataStream);
             authMsg.Status = MessageStatus.AuthRequired;
-            var sendBytes = await client.SendInternalAsync(authMsg, 0, null, token).ConfigureAwait(false);
-            _statistics.IncrementSentMessages();
-            _statistics.AddSentBytes(sendBytes);
+            var isSent = await client.SendInternalAsync(authMsg, 0, null, token).ConfigureAwait(false);
+            if (!isSent) throw new OperationCanceledException($"Auth message do not sent to {client.ToString()}");
         }
 
         _settings.Logger?.Invoke(Severity.Debug, $"{Header} starting data receiver for {client.ToString()}");
         client.DataReceiver = Task.Run(() => DataReceiver(client, token), token);
     }
+
     private Task ConnectWithSSL(ServerClient client, CancellationTokenSource linkedCts)
     {
         Task unawaited;
@@ -490,241 +647,103 @@ public class IoTcpServer : IDisposable
             {
                 token.ThrowIfCancellationRequested();
 
-                if (!IsClientConnected(client)) break;
-
-                Message msg = await _messageBuilder.BuildFromStream(client.DataStream);
-
-                if (msg == null)
-                {
-                    await Task.Delay(30, token).ConfigureAwait(false);
-                    continue;
-                }
-
-                if (!string.IsNullOrEmpty(_settings.AuthKey))
-                {
-                    if (_clientManager.ExistsUnauthenticatedClient(client.Id))
-                    {
-                        if (await AuthMessageHandle(msg, client, token))
-                            continue;
-                        else
-                            break;
-                    }
-                    else if (msg.Status == MessageStatus.RegisterClient)
-                    {
-                        _settings.Logger?.Invoke(Severity.Debug, $"{Header} client {client.ToString()} attempting to register GUID {msg.SenderGuid.ToString()}");
-                        _clientManager.ReplaceGuid(client.Id, msg.SenderGuid);
-                        _settings.Logger?.Invoke(Severity.Debug, $"{Header} updated client GUID from {client.Id} to {msg.SenderGuid}");
-
-                        client.Id = msg.SenderGuid;
-                        _events.HandleClientConnected(this, new ConnectionEventArgs(client));
-                        continue;
-                    }
-                }
-                if (msg.Status == MessageStatus.Shutdown)
-                {
-                    _settings.Logger?.Invoke(Severity.Debug, $"{Header} client {client.ToString()} is disconnecting");
+                if (!IsClientConnected(client)){
                     _clientManager.Remove(client.Id);
+                    client.Dispose();
                     break;
                 }
-                else if (msg.Status == MessageStatus.Removed)
-                {
-                    _settings.Logger?.Invoke(Severity.Debug, $"{Header} no authentication material for {client.ToString()}");
-                    _clientManager.Remove(client.Id);
-                    break;
-                }
-                if (msg.SyncRequest)
-                {
-                    _settings.Logger?.Invoke(Severity.Debug, $"{Header} {client.ToString()} synchronous request received: {msg.ConversationGuid.ToString()}");
 
-                    DateTime expiration = Common.GetExpirationTimestamp(msg);
-                    byte[] msgData = await Common.ReadMessageDataAsync(msg, _settings.StreamBufferSize, token).ConfigureAwait(false);
-
-                    if (DateTime.UtcNow < expiration)
-                    {
-                        Task unawaited = Task.Run(async () =>
-                        {
-                            SyncRequest syncReq = new SyncRequest(
-                                client,
-                                msg.ConversationGuid,
-                                msg.ExpirationUtc,
-                                msg.Metadata,
-                                msgData);
-
-                            SyncResponse? syncResp = null;
-
-                            syncResp = await _callbacks.HandleSyncRequestReceivedAsync(syncReq);
-                            if (syncResp != null)
-                            {
-                                Common.BytesToStream(syncResp.Data, 0, out int contentLength, out Stream stream);
-                                Message respMsg = _messageBuilder.ConstructNew(
-                                     contentLength,
-                                     stream,
-                                     false,
-                                     true,
-                                     msg.ExpirationUtc,
-                                     syncResp.Metadata);
-
-                                respMsg.ConversationGuid = msg.ConversationGuid;
-                                await client.SendInternalAsync(respMsg, contentLength, stream, token).ConfigureAwait(false);
-                            }
-                        }, token);
-                    }
-                    else
-                    {
-                        _settings.Logger?.Invoke(Severity.Debug, Header + "expired synchronous request received and discarded from " + client.ToString());
-                    }
-                }
-                else if (msg.SyncResponse)
-                {
-                    // Не нужно изменять срок действия сообщения; он копируется из запроса, который был установлен этим узлом
-                    // DateTime expiration = Common.GetExpirationTimestamp(msg);
-                    _settings.Logger?.Invoke(Severity.Debug, Header + client.ToString() + " synchronous response received: " + msg.ConversationGuid.ToString());
-                    byte[] msgData = await Common.ReadMessageDataAsync(msg, _settings.StreamBufferSize, token).ConfigureAwait(false);
-
-                    if (DateTime.UtcNow < msg.ExpirationUtc)
-                    {
-                        lock (_SyncResponseLock)
-                        {
-                            _SyncResponseReceived?.Invoke(this, new SyncResponseReceivedEventArgs(msg, msgData));
-                        }
-                    }
-                    else
-                    {
-                        _settings.Logger?.Invoke(Severity.Debug, Header + "expired synchronous response received and discarded from " + client.ToString());
-                    }
-                }
-                else
-                {
-                    byte[] msgData;
-
-                    if (_events.IsUsingMessages)
-                    {
-                        msgData = await Common.ReadMessageDataAsync(msg, _settings.StreamBufferSize, token).ConfigureAwait(false);
-                        MessageReceivedEventArgs mr = new MessageReceivedEventArgs(client, msg.Metadata, msgData);
-                        await Task.Run(() => _events.HandleMessageReceived(this, mr), token);
-                    }
-                    else if (_events.IsUsingStreams)
-                    {
-                        StreamReceivedEventArgs sr;
-                        ServerStream ss;
-
-                        if (msg.ContentLength >= _settings.MaxProxiedStreamSize)
-                        {
-                            ss = new ServerStream(msg.ContentLength, msg.DataStream);
-                            sr = new StreamReceivedEventArgs(client, msg.Metadata, msg.ContentLength, ss);
-                            _events.HandleStreamReceived(this, sr);
-                        }
-                        else
-                        {
-                            MemoryStream ms = await Common.DataStreamToMemoryStream(msg.ContentLength, msg.DataStream, _settings.StreamBufferSize, token).ConfigureAwait(false);
-                            ss = new ServerStream(msg.ContentLength, ms);
-                            sr = new StreamReceivedEventArgs(client, msg.Metadata, msg.ContentLength, ss);
-                            await Task.Run(() => _events.HandleStreamReceived(this, sr), token);
-                        }
-                    }
-                    else
-                    {
-                        _settings.Logger?.Invoke(Severity.Error, Header + "event handler not set for either MessageReceived or StreamReceived");
-                        break;
-                    }
-                }
-
-                _statistics.IncrementReceivedMessages();
-                _statistics.AddReceivedBytes(msg.ContentLength);
-                _clientManager.UpdateClientLastSeen(client.Id, DateTime.UtcNow);
+                await client.DataReceiving(token);
+            }
+            catch (ClientConnectionException cce)
+            {
+                HandleException(cce, "client disconnected");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Shutdown));
+                await DisconnectClientAsync(client.Id, sendNotice: false);
+                break;
+            }
+            catch (AuthenticatedFailedException afe)
+            {
+                HandleException(afe, "authenticate failed.");
+                _events.HandleAuthenticationFailed(this, new(client.IpPort));
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.AuthFailure));
+                await DisconnectClientAsync(client.Id, MessageStatus.AuthFailure, true, token).ConfigureAwait(false);
+                break;
             }
             catch (ObjectDisposedException ode)
             {
                 HandleException(ode, "object disposed exception encountered");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
                 await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
                 break;
             }
             catch (TaskCanceledException tce)
             {
                 HandleException(tce, "task canceled exception encountered");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
                 await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
                 break;
             }
             catch (OperationCanceledException oce)
             {
                 HandleException(oce, "operation canceled exception encountered");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
                 await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
                 break;
             }
             catch (IOException ioe)
             {
                 HandleException(ioe, "IO exception encountered");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
                 await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
                 break;
             }
             catch (Exception e)
             {
                 HandleException(e, $"data receiver exception for  {client.ToString()}: {e.Message}");
+                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
                 await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
                 break;
             }
         }
     }
 
-
-    private async Task<bool> AuthMessageHandle(Message message, ServerClient client, CancellationToken token)
-    {
-        _settings.Logger?.Invoke(Severity.Debug, $"{ConstantsString.Header} message received from unauthenticated endpoint {client.ToString()}");
-
-        int contentLength = 0;
-        Stream? authStream = null;
-
-        if (message.Status == MessageStatus.AuthRequested)
-        {
-            _events.HandleAuthenticationRequested(this, new AuthenticationRequestedEventArgs(client.IpPort));
-
-            if (message.AuthKey != null && message.AuthKey.Length > 0)
-            {
-                string clientPsk = Encoding.UTF8.GetString(message.AuthKey).Trim();
-                if (_settings.AuthKey.Trim().Equals(clientPsk))
-                {
-                    _settings.Logger?.Invoke(Severity.Debug, $"{ConstantsString.Header} client {client.ToString()} attempting to register GUID {message.SenderGuid.ToString()}");
-                    _clientManager.ReplaceGuid(client.Id, message.SenderGuid);
-                    _settings.Logger?.Invoke(Severity.Debug, $"{ConstantsString.Header} updated client GUID from {client.Id} to {message.SenderGuid}");
-                    client.Id = message.SenderGuid;
-
-                    _settings.Logger?.Invoke(Severity.Debug, $"{ConstantsString.Header} no authentication material for {client.ToString()}");
-                    _clientManager.RemoveUnauthenticatedClient(client.Id);
-                    _events.HandleAuthenticationSucceeded(this, new AuthenticationSucceededEventArgs(client));
-
-                    var data = Encoding.UTF8.GetBytes("Authentication successful");
-                    Common.BytesToStream(data, 0, out contentLength, out authStream);
-                    var authMsg = _messageBuilder.ConstructNew(contentLength, authStream, false, false, null);
-                    authMsg.Status = MessageStatus.AuthSuccess;
-                    await client.SendInternalAsync(authMsg, 0, null, token).ConfigureAwait(false);
-                    return true;
-                }
-                else
-                {
-                    _settings.Logger?.Invoke(Severity.Warn, $"{ConstantsString.Header} no authentication material for {client.ToString()}");
-                    await DisconnectClientAsync(client.Id, MessageStatus.AuthFailure, false, token).ConfigureAwait(false);
-                    return false;
-                }
-            }
-        }
-
-        // decline and terminate
-        _settings.Logger?.Invoke(Severity.Warn, $"{ConstantsString.Header} no authentication material for {client.ToString()}");
-        await DisconnectClientAsync(client.Id, MessageStatus.AuthFailure, false, token).ConfigureAwait(false);
-        return false;
-    }
     private void HandleException(Exception ode, string message)
     {
         _settings.Logger?.Invoke(Severity.Debug, $"{Header} {message}");
         _events.HandleExceptionEncountered(this, new ExceptionEventArgs(ode));
     }
 
+    #region Client event methods
+    private void SentMessage(object? sender, ClientSentMessageEventArgs e)
+    {
+        _statistics.IncrementSentMessages();
+        _statistics.AddSentBytes(e.SendBytes);
+    }
+    private void ReceivedMessage(object? sender, ClientReceivedMessageEventArgs e)
+    {
+        _statistics.IncrementReceivedMessages();
+        _statistics.AddReceivedBytes(e.ReceivedBytes);
+    }
+    private void ReplaceId(object? sender, ClientReplaceIdEventArgs e)
+    {
+        _clientManager.ReplaceGuid(e.LastClientId, e.NewClientId);
+    }
+    private void RemoveUnauthenticated(object? sender, ClientRemoveUnauthenticatedEventArgs e)
+    {
+        _clientManager.RemoveUnauthenticatedClient(e.ClientId);
+    }
+    private void UpdateLastSeen(object? sender, ClientUpdateLastSeenEventArgs e)
+    {
+        _clientManager.UpdateClientLastSeen(e.ClientId, DateTime.UtcNow);
+    }
+    #endregion Client event methods
+
     public void Dispose()
     {
         Dispose(true);
         GC.SuppressFinalize(this);
     }
-
     protected virtual void Dispose(bool disposing)
     {
         if (disposing)
@@ -733,7 +752,7 @@ public class IoTcpServer : IDisposable
 
             if (_isListening) Stop();
 
-            DisconnectClientsAsync(MessageStatus.Shutdown).Wait();
+            DisconnectAllClientsAsync(MessageStatus.Shutdown).Wait();
 
             if (_listener != null)
             {
@@ -742,6 +761,7 @@ public class IoTcpServer : IDisposable
                     _listener.Server.Close();
                     _listener.Server.Dispose();
                 }
+                _listener.Dispose();
             }
 
             if (_sslCertificate != null)
@@ -754,19 +774,11 @@ public class IoTcpServer : IDisposable
                 _clientManager.Dispose();
             }
 
-            _events = null;
-            _callbacks = null;
-            _statistics = null;
-
-            _listener = null;
-
+            _events.Dispose();
             _sslCertificate = null;
-
-            _tokenSource = null;
-
+            _tokenSource.Dispose();
             _acceptConnections = null;
             _monitorClients = null;
-
             _isListening = false;
         }
     }
