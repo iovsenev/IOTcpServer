@@ -1,4 +1,4 @@
-﻿namespace IOTcpServer.Core.Events;
+﻿namespace IOTcpServer.Core.Events.ServerEvents;
 
 /// <summary>
 /// Аргументы события для случая, когда клиент не проходит аутентификацию.

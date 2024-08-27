@@ -1,7 +1,6 @@
 ﻿using IOTcpServer.Core.Constants;
-using IOTcpServer.Core.Infrastructure;
 
-namespace IOTcpServer.Core.Events;
+namespace IOTcpServer.Core.Events.ServerEvents;
 
 /// <summary>
 /// TCP сервер ивенты
@@ -15,11 +14,6 @@ public class ServerEvents : IDisposable
     {
 
     }
-    
-    /// <summary>
-    /// Событие, срабатывающее при запросе аутентификации от клиента.
-    /// </summary>
-    public event EventHandler<AuthenticationRequestedEventArgs>? AuthenticationRequested;
 
     /// <summary>
     /// Событие, срабатывающее при успешной аутентификации клиента.
@@ -49,11 +43,7 @@ public class ServerEvents : IDisposable
     /// </summary>
     public event EventHandler<MessageReceivedEventArgs>? MessageReceived;
 
-    /// <summary> 
-    /// Это событие запускается, когда от клиента получен поток и требуется, чтобы WatsonTcp передал поток, содержащий полезную нагрузку сообщения, в ваше приложение.
-    /// Если задано MessageReceived, StreamReceived использоваться не будет.
-    /// </summary>
-    public event EventHandler<StreamReceivedEventArgs>? StreamReceived;
+    public bool IsUsingMessage => MessageReceived != null && MessageReceived.GetInvocationList().Length > 0;
 
     /// <summary>
     /// Это событие вызывается при запуске сервера.
@@ -70,74 +60,6 @@ public class ServerEvents : IDisposable
     /// </summary>
     public event EventHandler<ExceptionEventArgs>? ExceptionEncountered;
 
-    public event Func<SyncRequest, Task<SyncResponse>>? SyncRequestReceivedAsync;
-
-    internal event EventHandler<ClientSentMessageEventArgs>? ClientSentMessageEvent;
-    internal event EventHandler<ClientReceivedMessageEventArgs>? ClientReceivedMessageEvent;
-    internal event EventHandler<ClientReplaceIdEventArgs>? ClientReplaceIdEvent;
-    internal event EventHandler<ClientRemoveUnauthenticatedEventArgs>? ClientRemoveUnauthenticatedEvent;
-    internal event EventHandler<ClientUpdateLastSeenEventArgs>? ClientUpdateLastSeenEvent;
-
-    private readonly object _syncResponseLock = new object();
-    internal event EventHandler<SyncResponseReceivedEventArgs>? SyncResponseReceived;
-
-    internal async Task<SyncResponse> HandleSyncRequestReceivedAsync(SyncRequest req)
-    {
-        if (SyncRequestReceivedAsync == null)
-            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
-        try
-        {
-            var ret = await SyncRequestReceivedAsync(req);
-            return ret;
-        }
-        catch (Exception)
-        {
-            throw new InvalidOperationException(nameof(SyncRequestReceivedAsync));
-        }
-    }
-    internal void HandleClientSentMessage(object sender, ClientSentMessageEventArgs args)
-    {
-        WrappedEventHandler(() => ClientSentMessageEvent?.Invoke(sender, args), "MessageSent", sender);
-    }
-    internal void HandleReplaceClientGuid(object sender, ClientReplaceIdEventArgs args)
-    {
-        WrappedEventHandler(() => ClientReplaceIdEvent?.Invoke(sender, args), "MessageSent", sender);
-    }
-    internal void HandleClientReceivedMessage(object sender, ClientReceivedMessageEventArgs args)
-    {
-        WrappedEventHandler(() => ClientReceivedMessageEvent?.Invoke(sender, args), "MessageSent", sender);
-    }
-    internal void HandleClientRemoveUnauthenticated(object sender, ClientRemoveUnauthenticatedEventArgs args)
-    {
-        WrappedEventHandler(() => ClientRemoveUnauthenticatedEvent?.Invoke(sender, args), "MessageSent", sender);
-    }
-    internal void HandleClientUpdateLastSeen(object sender, ClientUpdateLastSeenEventArgs args)
-    {
-        WrappedEventHandler(() => ClientUpdateLastSeenEvent?.Invoke(sender, args), "MessageSent", sender);
-    }
-
-    internal void HandleSyncResponseReceived(object sender, SyncResponseReceivedEventArgs args)
-    {
-        lock (_syncResponseLock)
-        {
-            SyncResponseReceived?.Invoke(sender, args);
-        }
-    }
-
-    internal bool IsUsingMessages
-    {
-        get => MessageReceived != null && MessageReceived.GetInvocationList().Length > 0;
-    }
-
-    internal bool IsUsingStreams
-    {
-        get => StreamReceived != null && StreamReceived.GetInvocationList().Length > 0;
-    }
-
-    internal void HandleAuthenticationRequested(object sender, AuthenticationRequestedEventArgs args)
-    {
-        WrappedEventHandler(() => AuthenticationRequested?.Invoke(sender, args), "AuthenticationRequested", sender);
-    }
 
     internal void HandleAuthenticationSucceeded(object sender, AuthenticationSucceededEventArgs args)
     {
@@ -162,11 +84,6 @@ public class ServerEvents : IDisposable
     internal void HandleMessageReceived(object sender, MessageReceivedEventArgs args)
     {
         WrappedEventHandler(() => MessageReceived?.Invoke(sender, args), "MessageReceived", sender);
-    }
-
-    internal void HandleStreamReceived(object sender, StreamReceivedEventArgs args)
-    {
-        WrappedEventHandler(() => StreamReceived?.Invoke(sender, args), "StreamReceived", sender);
     }
 
     internal void HandleServerStarted(object sender, EventArgs args)
@@ -202,21 +119,13 @@ public class ServerEvents : IDisposable
 
     public void Dispose()
     {
-        AuthenticationRequested = null;
         AuthenticationSucceeded = null;
         AuthenticationFailed = null;
         ClientConnected = null;
         ClientDisconnected = null;
         MessageReceived = null;
-        StreamReceived = null;
         ServerStarted = null;
         ServerStopped = null;
         ExceptionEncountered = null;
-        ClientSentMessageEvent = null;
-        ClientReceivedMessageEvent = null;
-        ClientReplaceIdEvent = null;
-        ClientRemoveUnauthenticatedEvent = null;
-        ClientUpdateLastSeenEvent = null;
-        SyncResponseReceived = null;
     }
 }

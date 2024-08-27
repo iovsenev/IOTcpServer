@@ -1,5 +1,4 @@
-﻿
-using IOTcpServer.Core.Events;
+﻿using IOTcpServer.Core.Events.ServerEvents;
 using System.Net;
 
 namespace IOTcpServer.Core;

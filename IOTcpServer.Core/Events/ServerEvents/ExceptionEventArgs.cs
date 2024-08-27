@@ -1,4 +1,4 @@
-﻿namespace IOTcpServer.Core.Events;
+﻿namespace IOTcpServer.Core.Events.ServerEvents;
 
 /// <summary>
 /// Аргументы события при возникновении исключения. 

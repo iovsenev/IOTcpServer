@@ -93,6 +93,7 @@ public class ServerSettings
             _idleClientTimeoutSeconds = value;
         }
     }
+    public bool DebugMessages { get; set; }
     public bool NoDelay { get; set; } = true;
 
 

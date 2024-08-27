@@ -1,6 +1,6 @@
 ﻿using IOTcpServer.Core.Infrastructure;
 
-namespace IOTcpServer.Core.Events;
+namespace IOTcpServer.Core.Events.ServerEvents;
 
 /// <summary>
 /// Аргументы события при установлении соединения.

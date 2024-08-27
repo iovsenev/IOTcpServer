@@ -6,7 +6,8 @@ internal class DefaultSerializationHelper : ISerializationHelper
 {
     public T? DeserializeJson<T>(string json)
     {
-        return JsonSerializer.Deserialize<T>(json);
+        var result = JsonSerializer.Deserialize<T>(json);
+        return result;
     }
 
     /// <summary>
@@ -26,15 +27,7 @@ internal class DefaultSerializationHelper : ISerializationHelper
         //options.Converters.Add(_ExceptionConverter);
         //options.Converters.Add(_NameValueCollectionConverter);
 
-        if (!pretty)
-        {
-            options.WriteIndented = false;
-            return JsonSerializer.Serialize(obj, options);
-        }
-        else
-        {
-            options.WriteIndented = true;
-            return JsonSerializer.Serialize(obj, options);
-        }
+        options.WriteIndented = pretty;
+        return JsonSerializer.Serialize(obj, options);
     }
 }

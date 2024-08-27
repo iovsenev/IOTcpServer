@@ -4,14 +4,13 @@ using IOTcpServer.Core.Helpers;
 
 namespace IOTcpServer.Core.Infrastructure;
 
-public class MessageBuilder
+public static class MessageBuilder
 {
-    private ISerializationHelper _serializationHelper = new DefaultSerializationHelper();
-    private int _readStreamBuffer = 65536;
+    private static ISerializationHelper _serializationHelper = new DefaultSerializationHelper();
+    private static int _readStreamBuffer = 65536;
 
-    public MessageBuilder() { }
 
-    internal ISerializationHelper SerializationHelper
+    internal static ISerializationHelper SerializationHelper
     {
         get => _serializationHelper;
         set
@@ -21,7 +20,7 @@ public class MessageBuilder
         }
     }
 
-    internal int ReadStreamBuffer
+    internal static int ReadStreamBuffer
     {
         get => _readStreamBuffer;
         set
@@ -40,14 +39,12 @@ public class MessageBuilder
     /// <param name="syncResponse">Укажите, является ли сообщение синхронным ответом на сообщение.</param>
     /// <param name="expirationUtc">Время UTC, по истечении которого сообщение должно истечь (действительно только для синхронных запросов сообщений).</param>
     /// <param name="metadata">Метаданные для прикрепления к сообщению.</param>
-    internal Message ConstructNew(
+    internal static Message ConstructNew(
         long contentLength,
-        Stream stream,
-        bool syncRequest = false,
-        bool syncResponse = false,
-        DateTime? expirationUtc = null,
+        Stream? stream,
         Dictionary<string, object>? metadata = null)
     {
+        Message msg;
         if (contentLength < 0) throw new ArgumentException("Content length must be zero or greater.");
         if (contentLength > 0)
         {
@@ -55,14 +52,14 @@ public class MessageBuilder
             {
                 throw new ArgumentException("Cannot read from supplied stream.");
             }
+            msg = new(stream);
         }
-
-        Message msg = new Message(stream);
+        else
+        {
+            msg = new();
+        }
         msg.ContentLength = contentLength;
         msg.DataStream = stream;
-        msg.SyncRequest = syncRequest;
-        msg.SyncResponse = syncResponse;
-        msg.ExpirationUtc = expirationUtc;
         msg.Metadata = metadata;
 
         return msg;
@@ -73,12 +70,10 @@ public class MessageBuilder
     /// </summary>
     /// <param name="stream">Поток.</param>
     /// <param name="token">Cancellation token.</param>
-    internal async Task<Message> BuildFromStream(Stream stream, CancellationToken token = default)
+    internal static async Task<Message> BuildFromStream(Stream stream, CancellationToken token = default)
     {
         if (stream == null) throw new ArgumentNullException(nameof(stream));
         if (!stream.CanRead) throw new ArgumentException("Cannot read from stream.");
-
-        Message? msg;
 
         // {"len":0,"s":"Normal"}\r\n\r\n
         byte[] headerBytes = new byte[24];
@@ -110,7 +105,7 @@ public class MessageBuilder
             headerBytes = Common.AppendBytes(headerBytes, headerBuffer);
         }
 
-        msg = _serializationHelper.DeserializeJson<Message>(Encoding.UTF8.GetString(headerBytes));
+        var msg = _serializationHelper.DeserializeJson<Message>(Encoding.UTF8.GetString(headerBytes));
 
         if (msg == null)
             throw new SerializationException("not serialized");
@@ -125,7 +120,7 @@ public class MessageBuilder
     /// </summary>
     /// <param name="msg">Сообщение <see cref="Message"/></param>
     /// <returns>Header bytes.</returns>
-    internal byte[] GetHeaderBytes(Message msg)
+    internal static byte[] GetHeaderBytes(Message msg)
     {
         string jsonStr = _serializationHelper.SerializeJson(msg, false);
         byte[] jsonBytes = Encoding.UTF8.GetBytes(jsonStr);

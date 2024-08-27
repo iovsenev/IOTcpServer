@@ -105,13 +105,9 @@ public static class InputHalper
         return false;
     }
 
-#pragma warning disable CS8714 // The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.
-    public static Dictionary<TKey, TValue?> GetDictionary<TKey, TValue>(string keyQuestion, string valQuestion)
-#pragma warning restore CS8714 // The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.
+    public static Dictionary<string, TValue> GetDictionary<TValue>(string keyQuestion, string valQuestion)
     {
-#pragma warning disable CS8714 // The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.
-        Dictionary<TKey, TValue?> dictionary = new();
-#pragma warning restore CS8714 // The type cannot be used as type parameter in the generic type or method. Nullability of type argument doesn't match 'notnull' constraint.
+        Dictionary<string, TValue> dictionary = new();
         while (true)
         {
             string? @string = GetString(keyQuestion, null);
@@ -122,17 +118,18 @@ public static class InputHalper
 
             string? string2 = GetString(valQuestion, null);
 
-            TKey key = (TKey)Convert.ChangeType(@string, typeof(TKey));
+            var key = @string;
 
             if (key == null)
                 break;
 
             TValue? value = default;
 
-            if (!string.IsNullOrEmpty(string2))
+            if (string.IsNullOrEmpty(string2))
             {
-                value = (TValue)Convert.ChangeType(string2, typeof(TValue));
+                string2 = "";
             }
+            value = (TValue)Convert.ChangeType(string2, typeof(TValue));
 
             dictionary.Add(key, value);
         }

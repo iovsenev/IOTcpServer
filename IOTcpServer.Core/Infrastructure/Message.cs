@@ -4,10 +4,11 @@ using IOTcpServer.Core.Helpers;
 
 namespace IOTcpServer.Core.Infrastructure;
 
-internal class Message
+public class Message
 {
     private string _DateTimeFormat = "yyyy-MM-dd HH:mm:ss.fffzzz"; // 32 bytes
     private byte[] _authKey = Array.Empty<byte>();
+    public Message() { }
 
     public Message(Stream stream)
     {
@@ -61,17 +62,6 @@ internal class Message
         get;
         set;
     }
-    /// <summary>
-    /// Указывает, является ли сообщение синхронным запросом.
-    /// </summary>
-    [JsonPropertyName("syncreq")]
-    public bool SyncRequest { get; set; } = false;
-
-    /// <summary>
-    /// Указывает, является ли сообщение синхронным ответом.
-    /// </summary>
-    [JsonPropertyName("syncresp")]
-    public bool SyncResponse { get; set; } = false;
 
     /// <summary>
     /// Указывает текущее время, воспринимаемое отправителем; полезно для определения сроков действия.
@@ -79,11 +69,6 @@ internal class Message
     [JsonPropertyName("ts")]
     public DateTime TimestampUtc { get; set; } = DateTime.UtcNow;
 
-    /// <summary>
-    /// Указывает время истечения срока в формате UTC; применимо только к синхронным запросам.
-    /// </summary>
-    [JsonPropertyName("exp")]
-    public DateTime? ExpirationUtc { get; set; }
 
     /// <summary>
     /// Указывает GUID беседы сообщения. 
@@ -101,6 +86,8 @@ internal class Message
     /// </summary>
     [JsonIgnore]
     public Stream? DataStream { get; set; }
+    [JsonIgnore]
+    public byte[] Data { get; set; } = Array.Empty<byte>();
 
     /// <summary>
     /// Строковая версия объекта, понятная человеку.
@@ -111,8 +98,6 @@ internal class Message
         string ret = "---" + Environment.NewLine;
         ret += "  Preshared key     : " + (AuthKey != null ? Common.ByteArrayToHex(AuthKey) : "null") + Environment.NewLine;
         ret += "  Status            : " + Status.ToString() + Environment.NewLine;
-        ret += "  SyncRequest       : " + SyncRequest.ToString() + Environment.NewLine;
-        ret += "  SyncResponse      : " + SyncResponse.ToString() + Environment.NewLine;
         //ret += "  ExpirationUtc     : " + (ExpirationUtc != null ? ExpirationUtc.Value.ToString(_DateTimeFormat) : "null") + Environment.NewLine;
         ret += "  ConversationGuid  : " + ConversationGuid.ToString() + Environment.NewLine;
 

@@ -1,6 +1,7 @@
 ﻿using IOTcpServer.Core.Constants;
 using IOTcpServer.Core.CustomExceptions;
-using IOTcpServer.Core.Events;
+using IOTcpServer.Core.Events.ClientEvents;
+using IOTcpServer.Core.Events.ServerEvents;
 using IOTcpServer.Core.Extensions;
 using IOTcpServer.Core.Helpers;
 using IOTcpServer.Core.Infrastructure;
@@ -13,7 +14,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 
 namespace IOTcpServer.Core;
-public class IoTcpServer : IDisposable
+public class IoTcpServer :  ITcpServer
 {
     private const string Header = "[IOTcpServer]";
 
@@ -22,7 +23,6 @@ public class IoTcpServer : IDisposable
     private ServerEvents _events;
     private ServerStatistics _statistics;
 
-    private MessageBuilder _messageBuilder;
     private ServerClientsManager _clientManager;
 
     private int _connections = 0;
@@ -39,15 +39,11 @@ public class IoTcpServer : IDisposable
     private Task? _acceptConnections = null;
     private Task? _monitorClients = null;
 
-    private readonly object _SyncResponseLock = new object();
-    private event EventHandler<SyncResponseReceivedEventArgs>? _SyncResponseReceived;
-
     public IoTcpServer(ServerSettings serverSettings)
     {
         _settings = serverSettings;
         _events = new();
         _statistics = new();
-        _messageBuilder = new();
         _clientManager = new();
         _tokenSource = new();
         _token = _tokenSource.Token;
@@ -66,12 +62,6 @@ public class IoTcpServer : IDisposable
         }
         else _mode = Mode.Tcp;
         _listener = new TcpListener(_settings.ListenIp, _settings.ListenPort);
-
-        _events.ClientSentMessageEvent += SentMessage;
-        _events.ClientReceivedMessageEvent += ReceivedMessage;
-        _events.ClientReplaceIdEvent += ReplaceId;
-        _events.ClientRemoveUnauthenticatedEvent += RemoveUnauthenticated;
-        _events.ClientUpdateLastSeenEvent += UpdateLastSeen;
     }
 
 
@@ -86,7 +76,7 @@ public class IoTcpServer : IDisposable
     {
         if (_isListening) throw new InvalidOperationException("Server is already running.");
 
-        if (!_events.IsUsingMessages && !_events.IsUsingStreams)
+        if (_events.IsUsingMessage )
             throw new InvalidOperationException("One of either 'MessageReceived' or 'StreamReceived' events must first be set.");
 
         if (_mode == Mode.Tcp)
@@ -143,13 +133,16 @@ public class IoTcpServer : IDisposable
     }
 
     public async Task<bool> SendAsync(
-        Guid ClientId, byte[] data,
+        Guid ClientId,
+        byte[] data,
         Dictionary<string, object>? metadata = null,
         int start = 0,
         CancellationToken token = default)
     {
         if (data == null) data = Array.Empty<byte>();
-        Common.BytesToStream(data, start, out int contentLength, out Stream stream);
+
+        var contentLength = data.Length > 0 ? data.Length - start : 0;
+        Stream stream = Common.BytesToStream(data, start);
         return await SendAsync(ClientId, contentLength, stream, metadata, token).ConfigureAwait(false);
     }
 
@@ -170,62 +163,16 @@ public class IoTcpServer : IDisposable
         }
 
         if (stream == null) stream = new MemoryStream(Array.Empty<byte>());
-        Message msg = _messageBuilder.ConstructNew(contentLength, stream, false, false, null, metadata);
+        Message msg = MessageBuilder.ConstructNew(
+            contentLength,
+            stream,
+            metadata);
 
-        var contentCountSend = await client.SendInternalAsync(msg, contentLength, stream, token).ConfigureAwait(false);
+        var isSend = await client.SendInternalAsync(msg, token).ConfigureAwait(false);
 
-        if (!contentCountSend)
+        if (!isSend)
             return false;
         return true;
-    }
-
-    public async Task<SyncResponse> SendAndWaitAsync(
-        int timeoutMs,
-        Guid ClientId,
-        string data,
-        Dictionary<string, object>? metadata = null,
-        int start = 0,
-        CancellationToken token = default)
-    {
-        byte[] bytes = Array.Empty<byte>();
-        if (!String.IsNullOrEmpty(data)) bytes = Encoding.UTF8.GetBytes(data);
-        return await SendAndWaitAsync(timeoutMs, ClientId, bytes, metadata, start, token);
-        // SendAndWaitAsync(timeoutMs, guid, bytes, metadata, token).ConfigureAwait(false);
-    }
-
-    public async Task<SyncResponse> SendAndWaitAsync(
-        int timeoutMs,
-        Guid ClientId,
-        byte[] data,
-        Dictionary<string, object>? metadata = null,
-        int start = 0,
-        CancellationToken token = default)
-    {
-        if (data == null) data = Array.Empty<byte>();
-        Common.BytesToStream(data, start, out int contentLength, out Stream stream);
-        return await SendAndWaitAsync(timeoutMs, ClientId, contentLength, stream, metadata, token);
-    }
-
-    public async Task<SyncResponse> SendAndWaitAsync(
-        int timeoutMs,
-        Guid guid,
-        long contentLength,
-        Stream stream,
-        Dictionary<string, object>? metadata = null,
-        CancellationToken token = default)
-    {
-        if (contentLength < 0) throw new ArgumentException("Content length must be zero or greater.");
-        if (timeoutMs < 1000) throw new ArgumentException("Timeout milliseconds must be 1000 or greater.");
-        ServerClient? client = _clientManager.GetClient(guid);
-        if (client == null)
-        {
-            _settings.Logger?.Invoke(Severity.Error, Header + "unable to find client " + guid.ToString());
-            throw new KeyNotFoundException("Unable to find client " + guid.ToString() + ".");
-        }
-        if (stream == null) stream = new MemoryStream(Array.Empty<byte>());
-        DateTime expiration = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        Message msg = _messageBuilder.ConstructNew(contentLength, stream, true, false, expiration, metadata);
-        return await client.SendAndWaitInternalAsync(msg, timeoutMs, contentLength, stream, token);
     }
 
     public IEnumerable<ServerClient> ListClients()
@@ -271,10 +218,20 @@ public class IoTcpServer : IDisposable
 
             if (sendNotice)
             {
-                Message removeMsg = new Message(client.DataStream);
+                Message removeMsg = MessageBuilder.ConstructNew(
+                    0,
+                    null);
                 removeMsg.Status = status;
-                await client.SendInternalAsync(removeMsg, 0, null, token).ConfigureAwait(false);
+                await client.SendInternalAsync(removeMsg, token).ConfigureAwait(false);
             }
+            client.Events.ClientSentMessageEvent -= SentMessage;
+            client.Events.ClientReceivedMessageEvent -= ReceivedMessage;
+            client.Events.ClientAuthenticationSucceeded -= ClientAuthenticateSucceeded;
+            client.Events.ClientAuthenticationFailed -= ClientAuthenticationFailed;
+            client.Events.ClientDisconnectEvent -= ClientDisconnect;
+            client.Events.ClientNotConnectedEvent -= ClientNotConnected;
+            client.Events.ExceptionEncountered -= ExceptionEncountered;
+            client.Events.ClientReplaceIdEvent -= ReplaceId;
 
             client.Dispose();
             _clientManager.Remove(guid);
@@ -379,30 +336,44 @@ public class IoTcpServer : IDisposable
 
         if (_settings.KeepAliveSettings.EnableTcpKeepAlives) EnableKeepalives(tcpClient);
         var remoteEndPoint = tcpClient.Client.RemoteEndPoint as IPEndPoint;
-        string clientIp = remoteEndPoint is not null ? remoteEndPoint.Address.ToString() : string.Empty;
+        if (remoteEndPoint == null)
+        {
+            _settings.Logger?.Invoke(Severity.Warn, $"{Header} Remote Ip address must be not null");
+            return null;
+        }
+        string clientIp = remoteEndPoint.Address.ToString();
+
         if (_settings.PermittedIPs.Count > 0 && !_settings.PermittedIPs.Contains(clientIp))
         {
-            _settings.Logger?.Invoke(Severity.Info, Header + "rejecting connection from " + clientIp + " (not permitted)");
+            _settings.Logger?.Invoke(Severity.Info, $"{Header} rejecting connection from {clientIp} (not permitted)");
             tcpClient.Close();
             return null;
         }
 
         if (_settings.BlockedIPs.Count > 0 && _settings.BlockedIPs.Contains(clientIp))
         {
-            _settings.Logger?.Invoke(Severity.Info, Header + "rejecting connection from " + clientIp + " (blocked)");
+            _settings.Logger?.Invoke(Severity.Info, $"{Header} rejecting connection from {clientIp} (blocked)");
             tcpClient.Close();
             return null;
         }
 
-        ServerClient client = new ServerClient(tcpClient, _messageBuilder, _events, _settings);
+        ServerClient client = new ServerClient(tcpClient, _settings);
+        client.Events.ClientSentMessageEvent += SentMessage;
+        client.Events.ClientReceivedMessageEvent += ReceivedMessage;
+        client.Events.ClientAuthenticationSucceeded += ClientAuthenticateSucceeded;
+        client.Events.ClientAuthenticationFailed += ClientAuthenticationFailed;
+        client.Events.ClientDisconnectEvent += ClientDisconnect;
+        client.Events.ClientNotConnectedEvent += ClientNotConnected;
+        client.Events.ExceptionEncountered += ExceptionEncountered;
+        client.Events.ClientReplaceIdEvent += ReplaceId;
 
-        client.SendBuffer = new byte[_settings.StreamBufferSize];
 
         _clientManager.AddClient(client.Id, client);
         _clientManager.AddClientLastSeen(client.Id);
 
         return client;
     }
+
 
     private void IncrementConnection()
     {
@@ -445,15 +416,18 @@ public class IoTcpServer : IDisposable
             _settings.Logger?.Invoke(Severity.Debug, $" {Header} requesting authentication material from {client.ToString()}");
             _clientManager.AddUnauthenticatedClient(client.Id);
 
-            byte[] data = Encoding.UTF8.GetBytes("Authentication required");
-            Message authMsg = new Message(client.DataStream);
+            Message authMsg = MessageBuilder.ConstructNew(
+                0,
+                null
+                );
             authMsg.Status = MessageStatus.AuthRequired;
-            var isSent = await client.SendInternalAsync(authMsg, 0, null, token).ConfigureAwait(false);
+
+            var isSent = await client.SendInternalAsync(authMsg, token).ConfigureAwait(false);
             if (!isSent) throw new OperationCanceledException($"Auth message do not sent to {client.ToString()}");
         }
 
         _settings.Logger?.Invoke(Severity.Debug, $"{Header} starting data receiver for {client.ToString()}");
-        client.DataReceiver = Task.Run(() => DataReceiver(client, token), token);
+        client.DataReceiver = Task.Run(() => client.DataReceive( token), token);
     }
 
     private Task ConnectWithSSL(ServerClient client, CancellationTokenSource linkedCts)
@@ -553,160 +527,9 @@ public class IoTcpServer : IDisposable
         }
     }
 
-    private bool IsClientConnected(ServerClient client)
-    {
-        if (client != null && client.TcpClient != null)
-        {
-            var state = IPGlobalProperties.GetIPGlobalProperties()
-                .GetActiveTcpConnections()
-                    .FirstOrDefault(x =>
-                        x.LocalEndPoint.Equals(client.TcpClient.Client.LocalEndPoint)
-                        && x.RemoteEndPoint.Equals(client.TcpClient.Client.RemoteEndPoint));
-
-            if (state == default(TcpConnectionInformation)
-                || state.State == TcpState.Unknown
-                || state.State == TcpState.FinWait1
-                || state.State == TcpState.FinWait2
-                || state.State == TcpState.Closed
-                || state.State == TcpState.Closing
-                || state.State == TcpState.CloseWait)
-            {
-                return false;
-            }
-
-            byte[] tmp = new byte[1];
-            bool success = false;
-
-            try
-            {
-                client.WriteLock.Wait();
-                client.TcpClient.Client.Send(tmp, 0, 0);
-                success = true;
-            }
-            catch (SocketException se)
-            {
-                if (se.NativeErrorCode.Equals(10035)) success = true;
-            }
-            catch (Exception)
-            {
-            }
-            finally
-            {
-                if (client != null)
-                {
-                    client.WriteLock.Release();
-                }
-            }
-
-            if (success) return true;
-
-            try
-            {
-                client.WriteLock.Wait();
-
-                if ((client.TcpClient.Client.Poll(0, SelectMode.SelectWrite))
-                    && (!client.TcpClient.Client.Poll(0, SelectMode.SelectError)))
-                {
-                    byte[] buffer = new byte[1];
-                    if (client.TcpClient.Client.Receive(buffer, SocketFlags.Peek) == 0)
-                    {
-                        return false;
-                    }
-                    else
-                    {
-                        return true;
-                    }
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-            finally
-            {
-                if (client != null) client.WriteLock.Release();
-            }
-        }
-        else
-        {
-            return false;
-        }
-    }
 
     #endregion Connection Client
 
-    private async Task DataReceiver(ServerClient client, CancellationToken token)
-    {
-        while (true)
-        {
-            try
-            {
-                token.ThrowIfCancellationRequested();
-
-                if (!IsClientConnected(client)){
-                    _clientManager.Remove(client.Id);
-                    client.Dispose();
-                    break;
-                }
-
-                await client.DataReceiving(token);
-            }
-            catch (ClientConnectionException cce)
-            {
-                HandleException(cce, "client disconnected");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Shutdown));
-                await DisconnectClientAsync(client.Id, sendNotice: false);
-                break;
-            }
-            catch (AuthenticatedFailedException afe)
-            {
-                HandleException(afe, "authenticate failed.");
-                _events.HandleAuthenticationFailed(this, new(client.IpPort));
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.AuthFailure));
-                await DisconnectClientAsync(client.Id, MessageStatus.AuthFailure, true, token).ConfigureAwait(false);
-                break;
-            }
-            catch (ObjectDisposedException ode)
-            {
-                HandleException(ode, "object disposed exception encountered");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
-                await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
-                break;
-            }
-            catch (TaskCanceledException tce)
-            {
-                HandleException(tce, "task canceled exception encountered");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
-                await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
-                break;
-            }
-            catch (OperationCanceledException oce)
-            {
-                HandleException(oce, "operation canceled exception encountered");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
-                await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
-                break;
-            }
-            catch (IOException ioe)
-            {
-                HandleException(ioe, "IO exception encountered");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
-                await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
-                break;
-            }
-            catch (Exception e)
-            {
-                HandleException(e, $"data receiver exception for  {client.ToString()}: {e.Message}");
-                _events.HandleClientDisconnected(this, new(client, DisconnectReason.Removed));
-                await DisconnectClientAsync(client.Id, MessageStatus.Failure, false, token).ConfigureAwait(false);
-                break;
-            }
-        }
-    }
 
     private void HandleException(Exception ode, string message)
     {
@@ -715,27 +538,52 @@ public class IoTcpServer : IDisposable
     }
 
     #region Client event methods
+    private void ExceptionEncountered(object? sender, ExceptionEventArgs e)
+    {
+        _events.HandleExceptionEncountered(this, new(e.Exception));
+    }
+    private void ClientNotConnected(object? sender, ClientnInformationEventArgs e)
+    {
+        _clientManager.Remove(e.Client.Id);
+        _settings.Logger?.Invoke(Severity.Info, $"{Header} Client: {e.Client.ToString()} lost connection");
+        e.Client.Events.ClientSentMessageEvent -= SentMessage;
+        e.Client.Events.ClientReceivedMessageEvent -= ReceivedMessage;
+        e.Client.Events.ClientAuthenticationSucceeded -= ClientAuthenticateSucceeded;
+        e.Client.Events.ClientAuthenticationFailed -= ClientAuthenticationFailed;
+        e.Client.Events.ClientDisconnectEvent -= ClientDisconnect;
+        e.Client.Events.ClientNotConnectedEvent -= ClientNotConnected;
+        e.Client.Events.ExceptionEncountered -= ExceptionEncountered;
+        e.Client.Events.ClientReplaceIdEvent -= ReplaceId;
+        _events.HandleClientDisconnected(this,new(e.Client, DisconnectReason.Shutdown));
+        e.Client.Dispose();
+    }
     private void SentMessage(object? sender, ClientSentMessageEventArgs e)
     {
         _statistics.IncrementSentMessages();
-        _statistics.AddSentBytes(e.SendBytes);
+        _statistics.AddSentBytes(e.Message.ContentLength);
     }
     private void ReceivedMessage(object? sender, ClientReceivedMessageEventArgs e)
     {
         _statistics.IncrementReceivedMessages();
-        _statistics.AddReceivedBytes(e.ReceivedBytes);
+        _statistics.AddReceivedBytes(e.Message.ContentLength);
+        _events.HandleMessageReceived(this,new(e.Client, e.Message.Metadata, e.Message.Data));
     }
     private void ReplaceId(object? sender, ClientReplaceIdEventArgs e)
     {
-        _clientManager.ReplaceGuid(e.LastClientId, e.NewClientId);
+        _clientManager.ReplaceGuid(e.OldGuid, e.NewGuid);
     }
-    private void RemoveUnauthenticated(object? sender, ClientRemoveUnauthenticatedEventArgs e)
+    private void ClientAuthenticateSucceeded(object? sender, ClientnInformationEventArgs e)
     {
-        _clientManager.RemoveUnauthenticatedClient(e.ClientId);
+       _clientManager.RemoveUnauthenticatedClient(e.Client.Id);
     }
-    private void UpdateLastSeen(object? sender, ClientUpdateLastSeenEventArgs e)
+    private async void ClientDisconnect(object? sender, ClientDisconnectEventArgs e)
     {
-        _clientManager.UpdateClientLastSeen(e.ClientId, DateTime.UtcNow);
+        await DisconnectClientAsync(e.Client.Id, e.Status);
+    }
+    private async void ClientAuthenticationFailed(object? sender, ClientnInformationEventArgs e)
+    {
+        _settings.Logger?.Invoke(Severity.Warn, $"{Header} Client {e.Client.ToString()} is not authenticated.");
+        await DisconnectClientAsync(e.Client.Id, MessageStatus.AuthFailure);
     }
     #endregion Client event methods
 

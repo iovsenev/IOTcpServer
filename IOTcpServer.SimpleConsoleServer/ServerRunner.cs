@@ -1,14 +1,10 @@
-﻿using ServerCore.EventsArgs;
-using ServerCore;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
-using ServerCore.Helpers;
-using NewServer.DataAccess;
 using IOTcpServer.Core.Constants;
-using IOTcpServer.Core.Events;
 using IOTcpServer.Core.Infrastructure;
 using IOTcpServer.Core;
-using System;
+using System.Text.Json;
+using IOTcpServer.Core.Events.ServerEvents;
 
 namespace IOTcpServer.SimpleConsoleServer;
 public class ServerRunner
@@ -16,65 +12,55 @@ public class ServerRunner
     private static string _ServerIp = "";
     private static int _ServerPort = 0;
     private static bool _Ssl = false;
-    private static IoTcpServer _Server;
+    private static IoTcpServer _server = new IoTcpServer(new ());
     private static string _CertFile = "";
     private static string _CertPass = "";
     private static bool _DebugMessages = true;
     private static bool _AcceptInvalidCerts = true;
     private static bool _MutualAuth = true;
     private static Guid _LastGuid = Guid.Empty;
-    private readonly AppDbContext context;
 
     public ServerRunner()
     {
-        
     }
 
     public async Task Run(string[] args)
     {
-        _ServerIp = InputHalper.GetString("Server IP:", "localhost", false);
-        _ServerPort = InputHalper.GetInteger("Server port:", 9000, true, false);
-        _Ssl = InputHalper.GetBoolean("Use SSL:", false);
-
         try
         {
             if (!_Ssl)
             {
-                _Server = new IOTCPServer(_ServerIp, _ServerPort);
+
             }
             else
             {
-                _CertFile = InputHalper.GetString("Certificate file:", "test.pfx", false);
-                _CertPass = InputHalper.GetString("Certificate password:", "password", false);
+                _CertFile = InputHalper.GetString("Certificate file:", "test.pfx");
+                _CertPass = InputHalper.GetString("Certificate password:", "password");
                 _AcceptInvalidCerts = InputHalper.GetBoolean("Accept invalid certs:", true);
                 _MutualAuth = InputHalper.GetBoolean("Mutually authenticate:", false);
 
-                _Server = new IOTCPServer(_ServerIp, _ServerPort, _CertFile, _CertPass);
-                _Server.Settings.AcceptInvalidCertificates = _AcceptInvalidCerts;
-                _Server.Settings.MutuallyAuthenticate = _MutualAuth;
+                _server.Settings.AcceptInvalidCertificates = _AcceptInvalidCerts;
+                _server.Settings.MutuallyAuthenticate = _MutualAuth;
             }
 
-            _Server.Events.ClientConnected += ClientConnected;
-            _Server.Events.ClientDisconnected += ClientDisconnected;
-            _Server.Events.MessageReceived += MessageReceived;
-            _Server.Events.ServerStarted += ServerStarted;
-            _Server.Events.ServerStopped += ServerStopped;
-            _Server.Events.ExceptionEncountered += ExceptionEncountered;
-            _Server.Events.AuthenticationRequested += AuthenticationRequested;
-            _Server.Events.AuthenticationRequest += CheckAuth;
+            _server.Events.ClientConnected += ClientConnected;
+            _server.Events.ClientDisconnected += ClientDisconnected;
+            _server.Events.MessageReceived += MessageReceived;
+            _server.Events.ServerStarted += ServerStarted;
+            _server.Events.ServerStopped += ServerStopped;
+            _server.Events.ExceptionEncountered += ExceptionEncountered;
 
-            _Server.Callbacks.SyncRequestReceivedAsync = SyncRequestReceived;
 
             //_Server.Settings.IdleClientTimeoutSeconds = 10;
-            _Server.Settings.AuthKey = "0000000000000000";
-            _Server.Settings.Logger = Logger;
-            _Server.Settings.DebugMessages = _DebugMessages;
-            _Server.Settings.NoDelay = true;
+            _server.Settings.AuthKey = "0000000000000000";
+            _server.Settings.Logger = Logger;
+            _server.Settings.DebugMessages = _DebugMessages;
+            _server.Settings.NoDelay = true;
 
-            _Server.Keepalive.EnableTcpKeepAlives = true;
-            _Server.Keepalive.TcpKeepAliveInterval = 1;
-            _Server.Keepalive.TcpKeepAliveTime = 1;
-            _Server.Keepalive.TcpKeepAliveRetryCount = 3;
+            _server.Settings.KeepAliveSettings.EnableTcpKeepAlives = true;
+            _server.Settings.KeepAliveSettings.TcpKeepAliveInterval = 1;
+            _server.Settings.KeepAliveSettings.TcpKeepAliveTime = 1;
+            _server.Settings.KeepAliveSettings.TcpKeepAliveRetryCount = 3;
         }
         catch (Exception e)
         {
@@ -82,22 +68,23 @@ public class ServerRunner
             return;
         }
 
-        _Server.Start();
+        _server.Start();
 
         bool runForever = true;
-        List<ClientMetadata> clients;
+        List<ServerClient> clients;
         Guid guid;
         MessageStatus reason = MessageStatus.Removed;
         Dictionary<string, object> metadata;
 
         while (runForever)
         {
-            string userInput = InputHalper.GetString("Command [? for help]:", null, false);
-
+            string userInput = InputHalper.GetString("Command [? for help]:", null);
+            if (_server is null)
+                break;
             switch (userInput)
             {
                 case "?":
-                    bool listening = _Server != null ? _Server.IsListening : false;
+                    bool listening = _server != null ? _server.IsListening : false;
                     Console.WriteLine("Available commands:");
                     Console.WriteLine("  ?                   help (this menu)");
                     Console.WriteLine("  q                   quit");
@@ -129,23 +116,23 @@ public class ServerRunner
                     break;
 
                 case "start":
-                    _Server.Start();
+                    _server.Start();
                     break;
 
                 case "stop":
-                    _Server.Stop();
+                    _server.Stop();
                     break;
 
                 case "list":
-                    clients = _Server.ListClients().ToList();
+                    clients = _server.ListClients().ToList();
                     if (clients != null && clients.Count > 0)
                     {
                         Console.WriteLine("");
                         Console.WriteLine("Clients");
                         Console.WriteLine("-------");
-                        foreach (ClientMetadata curr in clients)
+                        foreach (ServerClient curr in clients)
                         {
-                            Console.WriteLine(curr.Guid.ToString() + ": " + curr.IpPort);
+                            Console.WriteLine(curr.Id.ToString() + ": " + curr.IpPort);
                         }
                         Console.WriteLine("");
                     }
@@ -156,92 +143,77 @@ public class ServerRunner
                     break;
 
                 case "dispose":
-                    _Server.Dispose();
+                    _server.Dispose();
                     break;
 
                 case "send":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-                    userInput = InputHalper.GetString("Data:", null, false);
-                    if (!await _Server.SendAsync(guid, userInput))
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
+                    userInput = InputHalper.GetString("Data:", null);
+                    if (!await _server.SendAsync(guid, userInput))
                         Console.WriteLine("Failed");
                     break;
 
                 case "send offset":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-                    userInput = InputHalper.GetString("Data:", null, false);
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
+                    userInput = InputHalper.GetString("Data:", null );
                     int offset = InputHalper.GetInteger("Offset:", 0, true, true);
-                    if (!await _Server.SendAsync(guid, Encoding.UTF8.GetBytes(userInput), null, offset))
+                    if (!await _server.SendAsync(guid, Encoding.UTF8.GetBytes(userInput), null, offset))
                         Console.WriteLine("Failed");
                     break;
 
                 case "send10":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-                    userInput = InputHalper.GetString("Data:", null, false);
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
+                    userInput = InputHalper.GetString("Data:", null);
                     for (int i = 0; i < 10; i++)
                     {
                         Console.WriteLine("Sending " + i);
-                        if (!await _Server.SendAsync(guid, userInput + "[" + i.ToString() + "]"))
+                        if (!await _server.SendAsync(guid, userInput + "[" + i.ToString() + "]"))
                             Console.WriteLine("Failed");
                     }
                     break;
 
                 case "send md":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-                    userInput = InputHalper.GetString("Data:", null, false);
-                    metadata = InputHalper.GetDictionary<string, object>("Key  :", "Value:"); ;
-                    if (!await _Server.SendAsync(guid, userInput, metadata))
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
+                    userInput = InputHalper.GetString("Data:", null);
+                    metadata = InputHalper.GetDictionary<object>("enter key", "enter value");
+                    if (!await _server.SendAsync(guid, userInput, metadata))
                         Console.WriteLine("Failed");
                     break;
 
                 case "send md large":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
                     metadata = new Dictionary<string, object>();
                     for (int i = 0; i < 100000; i++) metadata.Add(i.ToString(), i);
-                    if (!await _Server.SendAsync(guid, "Hello!", metadata))
+                    if (!await _server.SendAsync(guid, "Hello!", metadata))
                         Console.WriteLine("Failed");
-                    break;
-
-                case "sendandwait":
-                    await SendAndWait();
-                    break;
-
-                case "sendempty":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-                    metadata = InputHalper.GetDictionary<string, object>("Key  :", "Value:"); ;
-                    if (!await _Server.SendAsync(guid, "", metadata))
-                        Console.WriteLine("Failed");
-                    break;
-
-                case "sendandwait empty":
-                    await SendAndWaitEmpty();
                     break;
 
                 case "remove":
-                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
+                    guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString()));
                     Console.WriteLine("Valid disconnect reasons: Removed, Normal, Shutdown, Timeout");
-                    reason = (MessageStatus)Enum.Parse(typeof(MessageStatus), InputHalper.GetString("Disconnect reason:", "Removed", false));
-                    await _Server.DisconnectClientAsync(guid, reason);
+                    reason = (MessageStatus)Enum.Parse(typeof(MessageStatus), InputHalper.GetString("Disconnect reason:", "Removed"));
+                    await _server.DisconnectClientAsync(guid, reason);
                     break;
 
                 case "remove all":
-                    await _Server.DisconnectClientsAsync();
+                    await _server.DisconnectAllClientsAsync();
                     break;
 
                 case "psk":
-                    _Server.Settings.AuthKey = InputHalper.GetString("Preshared key:", "1234567812345678", false);
+                    _server.Settings.AuthKey = InputHalper.GetString("Preshared key:", "1234567812345678");
                     break;
 
                 case "stats":
-                    Console.WriteLine(_Server.Statistics.ToString());
+                    Console.WriteLine(_server.Statistics.ToString());
                     break;
 
                 case "stats reset":
-                    _Server.Statistics.Reset();
+                    _server.Statistics.Reset();
                     break;
 
                 case "debug":
-                    _Server.Settings.DebugMessages = !_Server.Settings.DebugMessages;
-                    Console.WriteLine("Debug set to: " + _Server.Settings.DebugMessages);
+                    _server.Settings.DebugMessages = !_server.Settings.DebugMessages;
+                    Console.WriteLine("Debug set to: " + _server.Settings.DebugMessages);
                     break;
 
                 default:
@@ -250,40 +222,27 @@ public class ServerRunner
         }
     }
 
-    private bool CheckAuth(AuthenticationRequestEventArgs e)
+   
+
+    private static void ExceptionEncountered(object? sender, ExceptionEventArgs e)
     {
-        var user = context.Users.FirstOrDefault(u => u.Name == e.UserName);
-        if (user == null)
-        {
-            return false;
-        }
-        return true;
+        Console.WriteLine(JsonSerializer.Serialize(e));
     }
 
-    private void AuthenticationRequested(object? sender, AuthenticationRequestedEventArgs e)
+    private static void ClientConnected(object? sender, ConnectionEventArgs args)
     {
-        Console.WriteLine($"Authentication requested from {e.IpPort}");
-    }
-
-    private static void ExceptionEncountered(object sender, ExceptionEventArgs e)
-    {
-        Console.WriteLine(_Server.SerializationHelper.SerializeJson(e.Exception, true));
-    }
-
-    private static void ClientConnected(object sender, ConnectionEventArgs args)
-    {
-        _LastGuid = args.Client.Guid;
+        _LastGuid = args.Client.Id;
         Console.WriteLine("Client connected: " + args.Client.ToString());
     }
 
-    private static void ClientDisconnected(object sender, DisconnectionEventArgs args)
+    private static void ClientDisconnected(object? sender, DisconnectionEventArgs args)
     {
         Console.WriteLine("Client disconnected: " + args.Client.ToString() + ": " + args.Reason.ToString());
     }
 
-    private static void MessageReceived(object sender, MessageReceivedEventArgs args)
+    private static void MessageReceived(object? sender, MessageReceivedEventArgs args)
     {
-        _LastGuid = args.Client.Guid;
+        _LastGuid = args.Client.Id;
         Console.Write(args.Data.Length + " byte message from " + args.Client.ToString() + ": ");
         if (args.Data != null) Console.WriteLine(Encoding.UTF8.GetString(args.Data));
         else Console.WriteLine("[null]");
@@ -306,12 +265,12 @@ public class ServerRunner
         }
     }
 
-    private static void ServerStarted(object sender, EventArgs args)
+    private static void ServerStarted(object? sender, EventArgs args)
     {
         Console.WriteLine("Server started");
     }
 
-    private static void ServerStopped(object sender, EventArgs args)
+    private static void ServerStopped(object? sender, EventArgs args)
     {
         Console.WriteLine("Server stopped");
     }
@@ -320,7 +279,7 @@ public class ServerRunner
     private static async Task<SyncResponse> SyncRequestReceived(SyncRequest req)
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
     {
-        _LastGuid = req.Client.Guid;
+        _LastGuid = req.Client.Id;
         Console.Write("Synchronous request received from " + req.Client.ToString() + ": ");
         if (req.Data != null) Console.WriteLine(Encoding.UTF8.GetString(req.Data));
         else Console.WriteLine("[null]");
@@ -344,63 +303,7 @@ public class ServerRunner
         return new SyncResponse(req, retMetadata, "Here is your response!");
     }
 
-    private static async Task SendAndWait()
-    {
-        Guid guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-        string userInput = InputHalper.GetString("Data:", null, false);
-        int timeoutMs = InputHalper.GetInteger("Timeout (milliseconds):", 5000, true, false);
-
-        try
-        {
-            Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start();
-            SyncResponse resp = await _Server.SendAndWaitAsync(timeoutMs, guid, userInput);
-            stopwatch.Stop();
-            if (resp.Metadata != null && resp.Metadata.Count > 0)
-            {
-                Console.WriteLine("Metadata:");
-                foreach (KeyValuePair<string, object> curr in resp.Metadata)
-                {
-                    Console.WriteLine("  " + curr.Key.ToString() + ": " + curr.Value.ToString());
-                }
-            }
-
-            Console.WriteLine("Response: " + Encoding.UTF8.GetString(resp.Data));
-            Console.WriteLine("Client responded in {0} ms/{1} ticks.", stopwatch.ElapsedMilliseconds, stopwatch.ElapsedTicks);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine("Exception: " + e.ToString());
-        }
-    }
-
-    private static async Task SendAndWaitEmpty()
-    {
-        Guid guid = Guid.Parse(InputHalper.GetString("GUID:", _LastGuid.ToString(), false));
-        int timeoutMs = InputHalper.GetInteger("Timeout (milliseconds):", 5000, true, false);
-
-        Dictionary<string, object> dict = new Dictionary<string, object>();
-        dict.Add("foo", "bar");
-
-        try
-        {
-            SyncResponse resp = await _Server.SendAndWaitAsync(timeoutMs, guid, "", dict);
-            if (resp.Metadata != null && resp.Metadata.Count > 0)
-            {
-                Console.WriteLine("Metadata:");
-                foreach (KeyValuePair<string, object> curr in resp.Metadata)
-                {
-                    Console.WriteLine("  " + curr.Key.ToString() + ": " + curr.Value.ToString());
-                }
-            }
-
-            Console.WriteLine("Response: " + Encoding.UTF8.GetString(resp.Data));
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine("Exception: " + e.ToString());
-        }
-    }
+    
 
     private static void Logger(Severity sev, string msg)
     {

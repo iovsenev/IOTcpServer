@@ -1,7 +1,7 @@
 ﻿using IOTcpServer.Core.Constants;
 using IOTcpServer.Core.Infrastructure;
 
-namespace IOTcpServer.Core.Events;
+namespace IOTcpServer.Core.Events.ServerEvents;
 
 /// <summary>
 /// Аргументы события при обнаружении отключения.
